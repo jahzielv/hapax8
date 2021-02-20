@@ -1,7 +1,0 @@
-clear1  CLR
-clear2  CLR
-        LOADI 0xaa
-        JUMP  END
-        LOADI 0x12
-        LOADI 0x34
-END     LOADI 0xDD

@@ -61,7 +61,7 @@ func (c *Chip8) Decode() {
 }
 
 func (c *Chip8) ToString() string {
-	return fmt.Sprintf("Chip State:\n\tinst: %#x\n\tindex: %#x\n\tpc: %#x\n\tsp: %d\n\t", c.inst, c.index, c.pc, c.sp)
+	return fmt.Sprintf("Chip State:\n\tinst: %#x\n\tindex: %#x\n\tpc: %#x\n\tsp: %d\n\tregs: %+v\n", c.inst, c.index, c.pc, c.sp, c.v)
 }
 
 func topNibble(i uint16) uint16 {
@@ -69,6 +69,10 @@ func topNibble(i uint16) uint16 {
 }
 func bottomNibble(i uint16) uint16 {
 	return (i & 0x000F)
+}
+
+func bottomByte(i uint16) uint16 {
+	return i & 0x00FF
 }
 
 func targetAddr(i uint16) uint16 {
@@ -102,11 +106,11 @@ func (c *Chip8) GetImm(numDigs int) uint8 {
 }
 
 func (c *Chip8) GetXReg() uint16 {
-	return c.inst & 0x0F00
+	return c.inst & 0x0F00 >> 8
 }
 
 func (c *Chip8) GetYReg() uint16 {
-	return c.inst & 0x00F0
+	return c.inst & 0x00F0 >> 4
 }
 
 // Math8 executes the correct math instruction based on the bottom nibble of an inst starting with 0x8.
@@ -197,6 +201,7 @@ func (c *Chip8) Execute() {
 		x := c.GetXReg()
 		imm := c.GetImm(2)
 		c.v[x] += imm
+		c.IncPC()
 
 	case 0x8:
 		c.Math8()
@@ -206,6 +211,14 @@ func (c *Chip8) Execute() {
 		y := c.GetYReg()
 		c.IncPC()
 		if c.v[x] != c.v[y] {
+			c.IncPC()
+		}
+	case 0xF:
+		bottom := bottomByte(c.inst)
+		switch bottom {
+		case 0x55:
+			x := c.GetXReg()
+			c.memory[c.index] = c.v[x]
 			c.IncPC()
 		}
 
