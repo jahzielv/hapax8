@@ -53,6 +53,14 @@ func (c *Chip8) Init() {
 	c.memory = make([]uint8, memSize)
 }
 
+// NewChip creates a new Chip8 instance loaded with the binary passed in
+func NewChip(bin string) *Chip8 {
+	c := new(Chip8)
+	c.Init()
+	c.LoadProgram(bin)
+	return c
+}
+
 // Decode decodes a single instruction.
 func (c *Chip8) Decode() {
 	topByte := bits.RotateLeft16(uint16(c.memory[c.pc]), 8) // shift the top byte up 8
@@ -60,6 +68,7 @@ func (c *Chip8) Decode() {
 	c.inst = topByte | bottomByte
 }
 
+// ToString prints out the chip's state: index, pc, sp, and reg block
 func (c *Chip8) ToString() string {
 	return fmt.Sprintf("Chip State:\n\tinst: %#x\n\tindex: %#x\n\tpc: %#x\n\tsp: %d\n\tregs: %+v\n", c.inst, c.index, c.pc, c.sp, c.v)
 }
@@ -94,6 +103,8 @@ func (c *Chip8) IncPC() {
 	c.pc += 2
 }
 
+// GetImm pulls out the immediate value from the current instruction.
+// numDigs is the number of hex digits to extract from the instruction.
 func (c *Chip8) GetImm(numDigs int) uint8 {
 	switch numDigs {
 	case 2:
@@ -153,14 +164,15 @@ func (c *Chip8) Execute() {
 		os.Exit(0)
 	}
 	top := topNibble(c.inst)
+	x := c.GetXReg()
+	y := c.GetYReg()
 	switch top {
-	case 0xA:
-		c.SetIndex()
-		c.IncPC()
 	case 0x0:
 		switch bottomNibble(c.inst) {
+		// CLR
 		case 0x0:
 			fmt.Println("clear screen")
+		// RET
 		case 0xE:
 			fmt.Println("ret")
 		}
@@ -171,54 +183,60 @@ func (c *Chip8) Execute() {
 	// CALL
 	case 0x2:
 		c.SetPC(targetAddr(c.inst))
+	// SKE
 	case 0x3:
 		imm := c.GetImm(2)
-		regNum := c.GetXReg()
 		c.IncPC()
-		if imm == c.v[regNum] {
+		if imm == c.v[x] {
 			c.IncPC() // skip inst
 		}
+	// SKNE
 	case 0x4:
 		imm := c.GetImm(2)
-		regNum := c.GetXReg()
 		c.IncPC()
-		if imm != c.v[regNum] {
+		if imm != c.v[x] {
 			c.IncPC()
 		}
+	// SKRE
 	case 0x5:
-		x := c.GetXReg()
-		y := c.GetYReg()
 		c.IncPC()
 		if c.v[x] == c.v[y] {
 			c.IncPC()
 		}
+	// LOAD
 	case 0x6:
-		x := c.GetXReg()
 		imm := c.GetImm(2)
 		c.v[x] = imm
 		c.IncPC()
+	// ADD
 	case 0x7:
-		x := c.GetXReg()
 		imm := c.GetImm(2)
 		c.v[x] += imm
 		c.IncPC()
-
+	// OR | AND | XOR | ADDR | SUB | SHR | SHL
 	case 0x8:
 		c.Math8()
 		c.IncPC()
+	// SKNRE
 	case 0x9:
-		x := c.GetXReg()
-		y := c.GetYReg()
 		c.IncPC()
 		if c.v[x] != c.v[y] {
 			c.IncPC()
 		}
+	// LOADI
+	case 0xA:
+		c.SetIndex()
+		c.IncPC()
 	case 0xF:
 		bottom := bottomByte(c.inst)
 		switch bottom {
+		// STOR
 		case 0x55:
-			x := c.GetXReg()
 			c.memory[c.index] = c.v[x]
+			c.IncPC()
+		// READ
+		case 0x65:
+			c.v[x] = c.memory[c.index]
 			c.IncPC()
 		}
 
