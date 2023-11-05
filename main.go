@@ -1,23 +1,46 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"math/bits"
 	"os"
+
+	"github.com/veandco/go-sdl2/sdl"
 )
 
-//
 const progStart = 0x200
 const memSize = 4096
+const FONTSET_SIZE = 80
+const FONT_OFFSET = 0x50
+
+var fontSet = [FONTSET_SIZE]uint8{
+	0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
+	0x20, 0x60, 0x20, 0x20, 0x70, // 1
+	0xF0, 0x10, 0xF0, 0x80, 0xF0, // 2
+	0xF0, 0x10, 0xF0, 0x10, 0xF0, // 3
+	0x90, 0x90, 0xF0, 0x10, 0x10, // 4
+	0xF0, 0x80, 0xF0, 0x10, 0xF0, // 5
+	0xF0, 0x80, 0xF0, 0x90, 0xF0, // 6
+	0xF0, 0x10, 0x20, 0x40, 0x40, // 7
+	0xF0, 0x90, 0xF0, 0x90, 0xF0, // 8
+	0xF0, 0x90, 0xF0, 0x10, 0xF0, // 9
+	0xF0, 0x90, 0xF0, 0x90, 0x90, // A
+	0xE0, 0x90, 0xE0, 0x90, 0xE0, // B
+	0xF0, 0x80, 0x80, 0x80, 0xF0, // C
+	0xE0, 0x90, 0x90, 0x90, 0xE0, // D
+	0xF0, 0x80, 0xF0, 0x80, 0xF0, // E
+	0xF0, 0x80, 0xF0, 0x80, 0x80, // F
+}
 
 // Chip8 is our emulated processor state
 type Chip8 struct {
 	inst       uint16
 	memory     []uint8
-	v          [16]uint8      // register block
-	index      uint16         // index reg
-	pc         uint16         // program counter
-	gfx        [64 * 32]uint8 // pixel array for graphics
+	v          [16]uint8 // register block
+	index      uint16    // index reg
+	pc         uint16    // program counter
+	gfx        []uint8   // pixel array for graphics
 	delayTimer uint8
 	soundTimer uint8
 	stack      [16]uint16
@@ -51,6 +74,10 @@ func (c *Chip8) Init() {
 	c.delayTimer = 0
 	c.soundTimer = 0
 	c.memory = make([]uint8, memSize)
+	c.gfx = make([]uint8, 64*32)
+	for i, d := range fontSet {
+		c.memory[FONT_OFFSET+i] = d
+	}
 }
 
 // NewChip creates a new Chip8 instance loaded with the binary passed in
@@ -107,6 +134,8 @@ func (c *Chip8) IncPC() {
 // numDigs is the number of hex digits to extract from the instruction.
 func (c *Chip8) GetImm(numDigs int) uint8 {
 	switch numDigs {
+	case 1:
+		return uint8(c.inst & 0x000F)
 	case 2:
 		return uint8(c.inst & 0x00FF)
 	case 3:
@@ -159,10 +188,10 @@ func (c *Chip8) Math8() {
 // Execute executes a single instruction.
 func (c *Chip8) Execute() {
 	c.Decode()
-	fmt.Println(c.ToString())
 	if c.inst == 0x0 {
-		os.Exit(0)
+		return
 	}
+	fmt.Println(c.ToString())
 	top := topNibble(c.inst)
 	x := c.GetXReg()
 	y := c.GetYReg()
@@ -172,6 +201,7 @@ func (c *Chip8) Execute() {
 		// CLR
 		case 0x0:
 			fmt.Println("clear screen")
+			clear(c.gfx)
 		// RET
 		case 0xE:
 			fmt.Println("ret")
@@ -227,6 +257,20 @@ func (c *Chip8) Execute() {
 	case 0xA:
 		c.SetIndex()
 		c.IncPC()
+	case 0xD:
+		// Get address in I
+		// memory[I:I+n] -> gfx[x+y]
+		x := c.v[c.GetXReg()]
+		y := c.v[c.GetYReg()]
+		n := c.GetImm(1)
+		spriteAddr := c.index
+		spriteLength := n
+		var j uint8
+		for i := spriteAddr; i < uint16(spriteLength+uint8(spriteAddr)); i++ {
+			c.gfx[64*x+y+j] = c.memory[i]
+			j++
+		}
+		c.IncPC()
 	case 0xF:
 		bottom := bottomByte(c.inst)
 		switch bottom {
@@ -239,7 +283,14 @@ func (c *Chip8) Execute() {
 			c.v[x] = c.memory[c.index]
 			c.IncPC()
 		}
+	}
 
+	if c.delayTimer > 0 {
+		c.delayTimer--
+	}
+
+	if c.soundTimer > 0 {
+		c.soundTimer--
 	}
 
 }
@@ -247,9 +298,91 @@ func (c *Chip8) Execute() {
 func main() {
 	chip := new(Chip8)
 	chip.Init()
-	// chip.LoadProgram("in.oct")
-	chip.LoadProgram("./out.bin")
-	for {
-		chip.Execute()
+	var file = flag.String("file", "", "file to run")
+	flag.Parse()
+	chip.LoadProgram(*file)
+
+	// for {
+	// 	chip.Execute()
+	// }
+
+	// Set up window and canvas
+	if err := sdl.Init(sdl.INIT_EVERYTHING); err != nil {
+		panic(err)
 	}
+	defer sdl.Quit()
+
+	window, err := sdl.CreateWindow("test", sdl.WINDOWPOS_UNDEFINED, sdl.WINDOWPOS_UNDEFINED,
+		1000, 1000, sdl.WINDOW_SHOWN)
+	if err != nil {
+		panic(err)
+	}
+	defer window.Destroy()
+
+	surface, err := window.GetSurface()
+	if err != nil {
+		panic(err)
+	}
+	surface.FillRect(nil, 0)
+
+	// offset := 0x55
+	// chip.drawLetter(surface, window, offset, 40, 50)
+
+	running := true
+	// for i := 0; i < FONT_OFFSET+FONTSET_SIZE; i++ {
+	// 	chip.gfx[i] = chip.memory[FONT_OFFSET+i]
+	// }
+	for running {
+		chip.Execute()
+		chip.drawMemory(surface, window)
+		for event := sdl.PollEvent(); event != nil; event = sdl.PollEvent() {
+			switch event.(type) {
+			case *sdl.QuitEvent:
+				println("Quit")
+				running = false
+				break
+			}
+		}
+	}
+}
+
+func (c *Chip8) drawMemory(surface *sdl.Surface, window *sdl.Window) {
+	for i := 0; i < len(c.gfx); i++ {
+		data := bits.Reverse8(c.gfx[i])
+		for j := 0; j < 8; j++ {
+			pixelVal := (data & (1 << j)) >> j
+			rect := sdl.Rect{X: int32((j * 10)), Y: int32((i * 10)), W: 10, H: 10}
+			color := sdl.Color{}
+			if pixelVal == 1 {
+				color = sdl.Color{R: 255, G: 255, B: 255, A: 255}
+			} else {
+				color = sdl.Color{R: 0, G: 0, B: 0, A: 0}
+			}
+			pixel := sdl.MapRGBA(surface.Format, color.R, color.G, color.B, color.A)
+
+			surface.FillRect(&rect, pixel)
+		}
+	}
+	window.UpdateSurface()
+}
+
+func (c *Chip8) drawLetter(surface *sdl.Surface, window *sdl.Window, offset, x, y int) {
+	for i := 0; i < 5; i++ {
+		data := bits.Reverse8(c.memory[offset+i])
+		for j := 0; j < 8; j++ {
+			pixelVal := (data & (1 << j)) >> j
+			rect := sdl.Rect{X: int32((j * 10) + x), Y: int32((i * 10) + y), W: 10, H: 10}
+			color := sdl.Color{}
+			if pixelVal == 1 {
+				color = sdl.Color{R: 255, G: 255, B: 255, A: 255}
+			} else {
+				color = sdl.Color{R: 0, G: 0, B: 0, A: 0}
+			}
+
+			pixel := sdl.MapRGBA(surface.Format, color.R, color.G, color.B, color.A)
+
+			surface.FillRect(&rect, pixel)
+		}
+	}
+	window.UpdateSurface()
 }
